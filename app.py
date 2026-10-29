@@ -4,6 +4,13 @@ from flask import Flask, jsonify, render_template_string, request
 app = Flask(__name__)
 active_streams = {}
 
+DEVICES = [
+    {"name": "Phone 1", "ip": "192.168.1.101"},
+    {"name": "Phone 2", "ip": "192.168.1.221"},
+    {"name": "Phone 3", "ip": "192.168.1.103"},
+    {"name": "Phone 4", "ip": "192.168.1.104"}
+]
+
 def get_device_telemetry(ip):
     try:
         subprocess.run(["adb", "connect", f"{ip}:5555"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
@@ -29,8 +36,6 @@ def get_device_telemetry(ip):
         return {"status": "Online", "battery": battery, "temp": temp, "power": power}
     except Exception:
         return {"status": "Offline", "battery": "N/A", "temp": "N/A", "power": "Unknown"}
-
-DEVICES = [{"name": "Phone 2", "ip": "192.168.1.221"}]
 
 @app.route("/")
 def index():
@@ -100,19 +105,20 @@ def index():
 @app.route("/stream/start/<device_ip>/<cam_type>", methods=["POST"])
 def start_stream(device_ip, cam_type):
     title = f"{cam_type} Cam - {device_ip}"
+    cam_id = "0" if cam_type == "Rear" else "1"
     cmd = f"""
     while true; do
         echo "[Camera Watchdog] Connecting to {device_ip}..."
         adb connect {device_ip}:5555
         adb -s {device_ip}:5555 wait-for-device
-        scrcpy -s {device_ip}:5555 --window-title "{title}" --max-size 1024 --max-fps 30
+        scrcpy -s {device_ip}:5555 --video-source=camera --camera-id={cam_id} --window-title="{title}" --max-size=1024 --max-fps=30
         echo "[Camera Watchdog] Stream ended. Reconnecting in 2s..."
         sleep 2
     done
     """
     process = subprocess.Popen(cmd, shell=True, executable="/bin/bash")
     active_streams[device_ip] = process
-    return jsonify({"status": "success", "message": f"Started {cam_type} stream with auto-recovery for {device_ip}"})
+    return jsonify({"status": "success", "message": f"Started {cam_type} camera stream for {device_ip}"})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
