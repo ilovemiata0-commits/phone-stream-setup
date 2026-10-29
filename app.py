@@ -22,17 +22,36 @@ def get_device_telemetry(ip):
         battery = "N/A"
         power = "Unplugged"
         temp = "28.0°C"
+        
+        level_val = None
+        scale_val = 100
+        
         for line in batt_res.stdout.splitlines():
-            if "level:" in line:
-                battery = f"{line.split(':')[1].strip()}%"
-            if "AC powered: true" in line or "USB powered: true" in line:
-                power = "Plugged In"
-            if "temperature:" in line:
+            line_str = line.strip()
+            if line_str.startswith("level:"):
                 try:
-                    t_val = int(line.split(':')[1].strip()) / 10.0
+                    level_val = int(line_str.split(':')[1].strip())
+                except:
+                    pass
+            elif line_str.startswith("scale:"):
+                try:
+                    scale_val = int(line_str.split(':')[1].strip())
+                except:
+                    pass
+            elif "AC powered: true" in line_str or "USB powered: true" in line_str:
+                power = "Plugged In"
+            elif line_str.startswith("temperature:"):
+                try:
+                    t_val = int(line_str.split(':')[1].strip()) / 10.0
                     temp = f"{t_val}°C"
                 except:
                     pass
+                    
+        # Calculate accurate battery percentage
+        if level_val is not None and scale_val > 0:
+            actual_pct = int((level_val / scale_val) * 100)
+            battery = f"{actual_pct}%"
+            
         return {"status": "Online", "battery": battery, "temp": temp, "power": power}
     except Exception:
         return {"status": "Offline", "battery": "N/A", "temp": "N/A", "power": "Unknown"}
@@ -91,7 +110,6 @@ def index():
         </div>
         <script>
             function startStream(ip, camType) {
-                // Silently triggers stream without popping up intrusive alert boxes
                 fetch('/stream/start/' + ip + '/' + camType, { method: 'POST' })
                     .then(response => response.json())
                     .then(data => console.log(data.message))
@@ -106,11 +124,16 @@ def index():
 @app.route("/stream/start/<device_ip>/<cam_type>", methods=["POST"])
 def start_stream(device_ip, cam_type):
     title = f"{cam_type} Cam - {device_ip}"
-    cam_id = "0" if cam_type == "Rear" else "1"
     
+    if cam_type == "Rear":
+        cam_id = "0"
+        orientation = "90"
+    else:
+        cam_id = "1"
+        orientation = "270"  # Flips the front camera 180 degrees relative to rear to fix inversion
+        
     subprocess.run(["adb", "connect", f"{device_ip}:5555"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
-    # Use valid scrcpy orientation flag (--orientation=90 or 270) to fix sideways display without crashing
     cmd = [
         "scrcpy",
         "-s", f"{device_ip}:5555",
@@ -119,13 +142,13 @@ def start_stream(device_ip, cam_type):
         f"--window-title={title}",
         "--max-size=1024",
         "--max-fps=30",
-        "--orientation=90"
+        f"--orientation={orientation}"
     ]
     
     process = subprocess.Popen(cmd)
     active_streams[device_ip] = process
     
-    return jsonify({"status": "success", "message": f"Started smooth {cam_type} camera stream for {device_ip}"})
+    return jsonify({"status": "success", "message": f"Started {cam_type} camera stream for {device_ip}"})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
