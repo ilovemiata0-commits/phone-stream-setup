@@ -1,4 +1,6 @@
 import subprocess
+import os
+import signal
 from flask import Flask, jsonify, render_template_string, request
 
 app = Flask(__name__)
@@ -64,11 +66,12 @@ def index():
             .value.battery { color: #fbbf24; }
             .value.temp { color: #fb923c; }
             .value.power { color: #38bdf8; }
-            .btn-container { display: flex; gap: 10px; margin-top: 24px; }
-            .btn { flex: 1; padding: 10px; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; color: white; text-align: center; transition: opacity 0.2s; }
+            .btn-container { display: flex; gap: 8px; margin-top: 16px; }
+            .btn { flex: 1; padding: 8px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; color: white; text-align: center; font-size: 0.9rem; transition: opacity 0.2s; }
             .btn:hover { opacity: 0.9; }
             .btn-rear { background-color: #0284c7; }
             .btn-front { background-color: #0d9488; }
+            .btn-stop { background-color: #ef4444; width: 100%; margin-top: 8px; }
         </style>
     </head>
     <body>
@@ -86,12 +89,19 @@ def index():
                     <button class="btn btn-rear" onclick="startStream('{{ dev.ip }}', 'Rear')">Rear Cam</button>
                     <button class="btn btn-front" onclick="startStream('{{ dev.ip }}', 'Front')">Front Cam</button>
                 </div>
+                <button class="btn btn-stop" onclick="stopStream('{{ dev.ip }}')">Stop Stream</button>
             </div>
             {% endfor %}
         </div>
         <script>
             function startStream(ip, camType) {
                 fetch('/stream/start/' + ip + '/' + camType, { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => alert(data.message))
+                    .catch(err => console.error('Error:', err));
+            }
+            function stopStream(ip) {
+                fetch('/stream/stop/' + ip, { method: 'POST' })
                     .then(response => response.json())
                     .then(data => alert(data.message))
                     .catch(err => console.error('Error:', err));
@@ -104,21 +114,37 @@ def index():
 
 @app.route("/stream/start/<device_ip>/<cam_type>", methods=["POST"])
 def start_stream(device_ip, cam_type):
+    if device_ip in active_streams:
+        try:
+            os.killpg(os.getpgid(active_streams[device_ip].pid), signal.SIGTERM)
+        except Exception:
+            pass
+        subprocess.run(["pkill", "-f", f"scrcpy.*{device_ip}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
     title = f"{cam_type} Cam - {device_ip}"
     cam_id = "0" if cam_type == "Rear" else "1"
+    
     cmd = f"""
     while true; do
-        echo "[Camera Watchdog] Connecting to {device_ip}..."
-        adb connect {device_ip}:5555
-        adb -s {device_ip}:5555 wait-for-device
         scrcpy -s {device_ip}:5555 --video-source=camera --camera-id={cam_id} --window-title="{title}" --max-size=1024 --max-fps=30
-        echo "[Camera Watchdog] Stream ended. Reconnecting in 2s..."
         sleep 2
     done
     """
-    process = subprocess.Popen(cmd, shell=True, executable="/bin/bash")
+    process = subprocess.Popen(cmd, shell=True, executable="/bin/bash", preexec_fn=os.setsid)
     active_streams[device_ip] = process
     return jsonify({"status": "success", "message": f"Started {cam_type} camera stream for {device_ip}"})
+
+@app.route("/stream/stop/<device_ip>", methods=["POST"])
+def stop_stream(device_ip):
+    if device_ip in active_streams:
+        try:
+            os.killpg(os.getpgid(active_streams[device_ip].pid), signal.SIGTERM)
+        except Exception:
+            active_streams[device_ip].terminate()
+        del active_streams[device_ip]
+    
+    subprocess.run(["pkill", "-f", f"scrcpy.*{device_ip}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return jsonify({"status": "success", "message": f"Successfully stopped stream for {device_ip}"})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
