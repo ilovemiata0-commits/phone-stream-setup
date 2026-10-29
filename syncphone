@@ -1,0 +1,38 @@
+#!/bin/bash
+# syncphone - Automatically configure connected Android device for wireless ADB (port 5555)
+
+echo "[*] Checking for connected Android devices via USB..."
+serial=$(adb devices | grep -w "device" | grep -v "List" | awk '{print $1}' | head -n 1)
+
+if [ -z "$serial" ]; then
+    echo "[-] No USB Android device found. Please connect your phone via USB first."
+    exit 1
+fi
+
+echo "[+] Found device: $serial"
+
+# Enable TCP/IP mode on port 5555
+echo "[*] Switching device to TCP/IP mode on port 5555..."
+adb -s "$serial" tcpip 5555
+sleep 2
+
+# Fetch device IP address
+echo "[*] Fetching device IP address..."
+ip_address=$(adb -s "$serial" shell ip addr show wlan0 | grep "inet " | awk '{print $2}' | cut -d/ -f1)
+
+if [ -z "$ip_address" ]; then
+    ip_address=$(adb -s "$serial" shell ip route | awk '{print $9}' | tail -n 1)
+fi
+
+if [ -z "$ip_address" ]; then
+    echo "[-] Could not automatically determine phone's IP address. Please check Wi-Fi connection."
+    exit 1
+fi
+
+echo "[+] Device IP detected: $ip_address"
+
+# Connect via wireless ADB
+echo "[*] Connecting to $ip_address:5555..."
+adb connect "$ip_address:5555"
+
+echo "[SUCCESS] Phone successfully registered and connected wirelessly at $ip_address:5555!"
