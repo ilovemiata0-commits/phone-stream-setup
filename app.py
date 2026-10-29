@@ -91,9 +91,10 @@ def index():
         </div>
         <script>
             function startStream(ip, camType) {
+                // Silently triggers stream without popping up intrusive alert boxes
                 fetch('/stream/start/' + ip + '/' + camType, { method: 'POST' })
                     .then(response => response.json())
-                    .then(data => alert(data.message))
+                    .then(data => console.log(data.message))
                     .catch(err => console.error('Error:', err));
             }
         </script>
@@ -107,10 +108,9 @@ def start_stream(device_ip, cam_type):
     title = f"{cam_type} Cam - {device_ip}"
     cam_id = "0" if cam_type == "Rear" else "1"
     
-    # Ensure ADB is connected and launch native scrcpy cleanly without laggy loops
     subprocess.run(["adb", "connect", f"{device_ip}:5555"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
-    # Clean scrcpy execution with correct portrait orientation lock (angle 1)
+    # Use valid scrcpy orientation flag (--orientation=90 or 270) to fix sideways display without crashing
     cmd = [
         "scrcpy",
         "-s", f"{device_ip}:5555",
@@ -119,7 +119,7 @@ def start_stream(device_ip, cam_type):
         f"--window-title={title}",
         "--max-size=1024",
         "--max-fps=30",
-        "--lock-video-orientation=1"
+        "--orientation=90"
     ]
     
     process = subprocess.Popen(cmd)
