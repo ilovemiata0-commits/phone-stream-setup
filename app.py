@@ -8,7 +8,6 @@ def get_connected_devices():
     """Dynamically discover active wireless ADB devices (port 5555)"""
     devices = []
     try:
-        # Run 'adb devices' to list active connections
         res = subprocess.run(["adb", "devices"], capture_output=True, text=True, timeout=2)
         lines = res.stdout.splitlines()
         
@@ -16,13 +15,11 @@ def get_connected_devices():
         for line in lines:
             if "\tdevice" in line or " device" in line:
                 serial = line.split()[0]
-                # Check if it's a network IP connection on port 5555
                 if ":" in serial or "." in serial:
                     ip = serial.split(":")[0]
                     if ip not in ip_list:
                         ip_list.append(ip)
                         
-        # Ensure we always map up to 4 dashboard slots (Phone 1 to Phone 4)
         for i in range(4):
             slot_num = i + 1
             if i < len(ip_list):
@@ -82,22 +79,6 @@ def get_device_telemetry(ip):
 
 @app.route("/")
 def index():
-    discovered_devices = get_connected_devices()
-    device_cards = []
-    
-    for dev in discovered_devices:
-        if dev["connected"]:
-            telemetry = get_device_telemetry(dev["ip"])
-            device_cards.append({**dev, **telemetry})
-        else:
-            device_cards.append({
-                **dev,
-                "status": "Waiting",
-                "battery": "N/A",
-                "temp": "N/A",
-                "power": "N/A"
-            })
-        
     html_template = """
     <!DOCTYPE html>
     <html lang="en">
@@ -106,7 +87,10 @@ def index():
         <title>Multi-Phone Remote Monitoring</title>
         <style>
             body { background-color: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 40px; }
-            h1 { text-align: center; color: #38bdf8; margin-bottom: 40px; }
+            h1 { text-align: center; color: #38bdf8; margin-bottom: 20px; }
+            .top-bar { text-align: center; margin-bottom: 40px; }
+            .btn-all { background-color: #7c3aed; color: white; padding: 12px 24px; border: none; border-radius: 8px; font-weight: bold; font-size: 1rem; cursor: pointer; transition: opacity 0.2s; }
+            .btn-all:hover { opacity: 0.9; }
             .grid { display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; }
             .card { background-color: #1e293b; border: 1px solid #334155; border-radius: 12px; width: 320px; padding: 24px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
             .card-title { color: #38bdf8; font-size: 1.5rem; font-weight: bold; margin-bottom: 20px; border-bottom: 1px solid #334155; padding-bottom: 10px; }
@@ -129,38 +113,84 @@ def index():
     </head>
     <body>
         <h1>Multi-Phone Remote Monitoring</h1>
-        <div class="grid">
-            {% for dev in devices %}
-            <div class="card">
-                <div class="card-title">{{ dev.name }}</div>
-                <div class="row"><span class="label">Status:</span><span class="value {{ 'online' if dev.status == 'Online' else ('offline' if dev.status == 'Offline' else 'waiting') }}">{{ dev.status }}</span></div>
-                <div class="row"><span class="label">Target IP:</span><span class="value" style="font-size: 0.9rem;">{{ dev.ip }}{{ ':5555' if dev.connected else '' }}</span></div>
-                <div class="row"><span class="label">Battery:</span><span class="value battery">{{ dev.battery }}</span></div>
-                <div class="row"><span class="label">Temperature:</span><span class="value temp">{{ dev.temp }}</span></div>
-                <div class="row"><span class="label">Power:</span><span class="value power">{{ dev.power }}</span></div>
-                <div class="btn-container">
-                    {% if dev.connected %}
-                    <button class="btn btn-rear" onclick="startStream('{{ dev.ip }}', 'Rear')">Rear Cam</button>
-                    <button class="btn btn-front" onclick="startStream('{{ dev.ip }}', 'Front')">Front Cam</button>
-                    {% else %}
-                    <button class="btn" disabled>Waiting...</button>
-                    {% endif %}
-                </div>
-            </div>
-            {% endfor %}
+        <div class="top-bar">
+            <button class="btn-all" onclick="startAllRearCams()">📹 Watch All Rear Cams</button>
+        </div>
+        <div class="grid" id="device-grid">
+            <!-- Dynamically populated via JS polling -->
         </div>
         <script>
+            function fetchTelemetry() {
+                fetch('/api/devices')
+                    .then(response => response.json())
+                    .then(devices => {
+                        const grid = document.getElementById('device-grid');
+                        grid.innerHTML = '';
+                        devices.forEach(dev => {
+                            let statusClass = dev.status === 'Online' ? 'online' : (dev.status === 'Offline' ? 'offline' : 'waiting');
+                            let ipDisplay = dev.connected ? dev.ip + ':5555' : dev.ip;
+                            
+                            let btnHtml = dev.connected ? 
+                                `<button class="btn btn-rear" onclick="startStream('${dev.ip}', 'Rear')">Rear Cam</button>
+                                 <button class="btn btn-front" onclick="startStream('${dev.ip}', 'Front')">Front Cam</button>` :
+                                `<button class="btn" disabled>Waiting...</button>`;
+
+                            let card = `
+                            <div class="card">
+                                <div class="card-title">${dev.name}</div>
+                                <div class="row"><span class="label">Status:</span><span class="value ${statusClass}">${dev.status}</span></div>
+                                <div class="row"><span class="label">Target IP:</span><span class="value" style="font-size: 0.9rem;">${ipDisplay}</span></div>
+                                <div class="row"><span class="label">Battery:</span><span class="value battery">${dev.battery}</span></div>
+                                <div class="row"><span class="label">Temperature:</span><span class="value temp">${dev.temp}</span></div>
+                                <div class="row"><span class="label">Power:</span><span class="value power">${dev.power}</span></div>
+                                <div class="btn-container">${btnHtml}</div>
+                            </div>`;
+                            grid.innerHTML += card;
+                        });
+                    })
+                    .catch(err => console.error('Telemetry fetch error:', err));
+            }
+
             function startStream(ip, camType) {
                 fetch('/stream/start/' + ip + '/' + camType, { method: 'POST' })
                     .then(response => response.json())
                     .then(data => console.log(data.message))
                     .catch(err => console.error('Error:', err));
             }
+
+            function startAllRearCams() {
+                fetch('/stream/start-all-rear', { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => console.log(data.message))
+                    .catch(err => console.error('Error:', err));
+            }
+
+            // Initial load and poll every 10 seconds for live battery/temp/power updates
+            fetchTelemetry();
+            setInterval(fetchTelemetry, 10000);
         </script>
     </body>
     </html>
     """
-    return render_template_string(html_template, devices=device_cards)
+    return render_template_string(html_template)
+
+@app.route("/api/devices")
+def api_devices():
+    discovered_devices = get_connected_devices()
+    device_cards = []
+    for dev in discovered_devices:
+        if dev["connected"]:
+            telemetry = get_device_telemetry(dev["ip"])
+            device_cards.append({**dev, **telemetry})
+        else:
+            device_cards.append({
+                **dev,
+                "status": "Waiting",
+                "battery": "N/A",
+                "temp": "N/A",
+                "power": "N/A"
+            })
+    return jsonify(device_cards)
 
 @app.route("/stream/start/<device_ip>/<cam_type>", methods=["POST"])
 def start_stream(device_ip, cam_type):
@@ -189,6 +219,31 @@ def start_stream(device_ip, cam_type):
     active_streams[device_ip] = process
     
     return jsonify({"status": "success", "message": f"Started {cam_type} camera stream for {device_ip}"})
+
+@app.route("/stream/start-all-rear", methods=["POST"])
+def start_all_rear():
+    devices = get_connected_devices()
+    launched_count = 0
+    for dev in devices:
+        if dev["connected"]:
+            ip = dev["ip"]
+            title = f"Rear Cam - {ip}"
+            subprocess.run(["adb", "connect", f"{ip}:5555"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            cmd = [
+                "scrcpy",
+                "-s", f"{ip}:5555",
+                "--video-source=camera",
+                "--camera-id=0",
+                f"--window-title={title}",
+                "--max-size=1024",
+                "--max-fps=30",
+                "--orientation=90"
+            ]
+            process = subprocess.Popen(cmd)
+            active_streams[ip] = process
+            launched_count += 1
+            
+    return jsonify({"status": "success", "message": f"Launched {launched_count} rear camera streams."})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
