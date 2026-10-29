@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Android Security Camera Dashboard</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 20px; }
+        .container { max-width: 1050px; margin: 0 auto; }
+        h1 { text-align: center; color: #38bdf8; margin-bottom: 5px; }
+        p.subtitle { text-align: center; color: #94a3b8; margin-top: 0; margin-bottom: 20px; }
+        .top-action { text-align: center; margin-bottom: 30px; }
+        .btn-all { background: #e11d48; color: white; padding: 10px 24px; border-radius: 8px; text-decoration: none; font-size: 1rem; font-weight: bold; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.3); transition: background 0.2s; display: inline-block; }
+        .btn-all:hover { background: #be123c; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; }
+        .card { background: #1e293b; border-radius: 12px; padding: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.3); border: 1px solid #334155; }
+        .card h2 { margin-top: 0; font-size: 1.25rem; color: #38bdf8; border-bottom: 1px solid #334155; padding-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+        .stat { margin: 8px 0; font-size: 0.9rem; display: flex; justify-content: space-between; }
+        .stat span { color: #cbd5e1; }
+        .status-online { color: #4ade80; font-weight: bold; }
+        .status-offline { color: #f87171; font-weight: bold; }
+        .btn-group { margin-top: 15px; display: flex; gap: 8px; flex-wrap: wrap; }
+        a.btn { background: #0284c7; color: white; padding: 6px 12px; border-radius: 6px; text-decoration: none; font-size: 0.85rem; font-weight: 500; transition: background 0.2s; flex: 1; text-align: center; }
+        a.btn:hover { background: #0369a1; }
+        a.btn-front { background: #0d9488; }
+        a.btn-front:hover { background: #0f766e; }
+        a.btn-flash { background: #d97706; color: white; flex-basis: 100%; margin-top: 4px; }
+        a.btn-flash:hover { background: #b45309; }
+    </style>
+    <script>
+        async function updateDashboard() {
+            try {
+                let response = await fetch('/api/status');
+                let data = await response.json();
+                
+                for (let i = 1; i <= 4; i++) {
+                    let phone = data[i];
+                    if (!phone) continue;
+                    
+                    let statusEl = document.getElementById(`status-${i}`);
+                    if (statusEl) {
+                        statusEl.innerText = phone.status;
+                        statusEl.className = phone.status === 'Online' ? 'status-online' : 'status-offline';
+                    }
+                    
+                    let ipEl = document.getElementById(`ip-${i}`);
+                    if (ipEl) ipEl.innerText = phone.ip;
+                    
+                    let batEl = document.getElementById(`battery-${i}`);
+                    if (batEl) batEl.innerText = phone.battery;
+                    
+                    let tempEl = document.getElementById(`temp-${i}`);
+                    if (tempEl) tempEl.innerText = phone.temp;
+                    
+                    let powerEl = document.getElementById(`charging-${i}`);
+                    if (powerEl) powerEl.innerText = phone.charging;
+                }
+            } catch (err) {
+                console.error('Failed to fetch live stats:', err);
+            }
+        }
+        
+        setInterval(updateDashboard, 3000);
+    </script>
+</head>
+<body>
+    <div class="container">
+        <h1>🔒 Security Camera Dashboard</h1>
+        <p class="subtitle">Multi-Phone Remote Monitoring & Control System</p>
+        
+        <div class="top-action">
+            <a href="{{ url_for('stream_all') }}" class="btn-all">🚨 Watch All Rear Cameras</a>
+        </div>
+        
+        <div class="grid">
+            {% for i, data in phones.items() %}
+            <div class="card">
+                <h2>Phone {{ i }}</h2>
+                <div class="stat"><span>Status:</span> <span id="status-{{ i }}" class="status-{{ 'online' if data.status == 'Online' else 'offline' }}">{{ data.status }}</span></div>
+                <div class="stat"><span>Target IP:</span> <span id="ip-{{ i }}" style="font-size: 0.8rem; color: #38bdf8;">{{ data.ip }}</span></div>
+                <div class="stat"><span>Battery:</span> <span id="battery-{{ i }}" style="color: #facc15; font-weight: bold;">{{ data.battery }}</span></div>
+                <div class="stat"><span>Temperature:</span> <span id="temp-{{ i }}" style="color: #fb923c;">{{ data.temp }}</span></div>
+                <div class="stat"><span>Power:</span> <span id="charging-{{ i }}" style="color: #38bdf8;">{{ data.charging }}</span></div>
+                <div class="btn-group">
+                    {% if data.status == 'Online' %}
+                    <a href="{{ url_for('stream', phone_id=i, cam_type='rear') }}" class="btn">Rear Cam</a>
+                    <a href="{{ url_for('stream', phone_id=i, cam_type='front') }}" class="btn btn-front">Front Cam</a>
+                    <a href="{{ url_for('flashlight', phone_id=i) }}" class="btn btn-flash">🔦 Toggle Flashlight</a>
+                    {% else %}
+                    <a href="#" onclick="alert('Phone is offline/not synced yet. Run syncphone via USB first!'); return false;" class="btn" style="background: #475569; flex: 1;">Offline</a>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</body>
+</html>
