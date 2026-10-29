@@ -4,12 +4,37 @@ from flask import Flask, jsonify, render_template_string, request
 app = Flask(__name__)
 active_streams = {}
 
-DEVICES = [
-    {"name": "Phone 1", "ip": "192.168.1.101"},
-    {"name": "Phone 2", "ip": "192.168.1.221"},
-    {"name": "Phone 3", "ip": "192.168.1.103"},
-    {"name": "Phone 4", "ip": "192.168.1.104"}
-]
+def get_connected_devices():
+    """Dynamically discover active wireless ADB devices (port 5555)"""
+    devices = []
+    try:
+        # Run 'adb devices' to list active connections
+        res = subprocess.run(["adb", "devices"], capture_output=True, text=True, timeout=2)
+        lines = res.stdout.splitlines()
+        
+        ip_list = []
+        for line in lines:
+            if "\tdevice" in line or " device" in line:
+                serial = line.split()[0]
+                # Check if it's a network IP connection on port 5555
+                if ":" in serial or "." in serial:
+                    ip = serial.split(":")[0]
+                    if ip not in ip_list:
+                        ip_list.append(ip)
+                        
+        # Ensure we always map up to 4 dashboard slots (Phone 1 to Phone 4)
+        for i in range(4):
+            slot_num = i + 1
+            if i < len(ip_list):
+                ip = ip_list[i]
+                devices.append({"name": f"Phone {slot_num}", "ip": ip, "connected": True})
+            else:
+                devices.append({"name": f"Phone {slot_num}", "ip": "Waiting for connection...", "connected": False})
+    except Exception:
+        for i in range(4):
+            devices.append({"name": f"Phone {i+1}", "ip": "Waiting for connection...", "connected": False})
+            
+    return devices
 
 def get_device_telemetry(ip):
     try:
@@ -47,7 +72,6 @@ def get_device_telemetry(ip):
                 except:
                     pass
                     
-        # Calculate accurate battery percentage
         if level_val is not None and scale_val > 0:
             actual_pct = int((level_val / scale_val) * 100)
             battery = f"{actual_pct}%"
@@ -58,10 +82,21 @@ def get_device_telemetry(ip):
 
 @app.route("/")
 def index():
+    discovered_devices = get_connected_devices()
     device_cards = []
-    for dev in DEVICES:
-        telemetry = get_device_telemetry(dev["ip"])
-        device_cards.append({**dev, **telemetry})
+    
+    for dev in discovered_devices:
+        if dev["connected"]:
+            telemetry = get_device_telemetry(dev["ip"])
+            device_cards.append({**dev, **telemetry})
+        else:
+            device_cards.append({
+                **dev,
+                "status": "Waiting",
+                "battery": "N/A",
+                "temp": "N/A",
+                "power": "N/A"
+            })
         
     html_template = """
     <!DOCTYPE html>
@@ -80,6 +115,7 @@ def index():
             .value { font-weight: 600; }
             .value.online { color: #4ade80; }
             .value.offline { color: #f87171; }
+            .value.waiting { color: #64748b; font-style: italic; font-size: 0.85rem; }
             .value.battery { color: #fbbf24; }
             .value.temp { color: #fb923c; }
             .value.power { color: #38bdf8; }
@@ -88,6 +124,7 @@ def index():
             .btn:hover { opacity: 0.9; }
             .btn-rear { background-color: #0284c7; }
             .btn-front { background-color: #0d9488; }
+            .btn:disabled { background-color: #334155; color: #64748b; cursor: not-allowed; }
         </style>
     </head>
     <body>
@@ -96,14 +133,18 @@ def index():
             {% for dev in devices %}
             <div class="card">
                 <div class="card-title">{{ dev.name }}</div>
-                <div class="row"><span class="label">Status:</span><span class="value {{ 'online' if dev.status == 'Online' else 'offline' }}">{{ dev.status }}</span></div>
-                <div class="row"><span class="label">Target IP:</span><span class="value" style="font-size: 0.9rem;">{{ dev.ip }}:5555</span></div>
+                <div class="row"><span class="label">Status:</span><span class="value {{ 'online' if dev.status == 'Online' else ('offline' if dev.status == 'Offline' else 'waiting') }}">{{ dev.status }}</span></div>
+                <div class="row"><span class="label">Target IP:</span><span class="value" style="font-size: 0.9rem;">{{ dev.ip }}{{ ':5555' if dev.connected else '' }}</span></div>
                 <div class="row"><span class="label">Battery:</span><span class="value battery">{{ dev.battery }}</span></div>
                 <div class="row"><span class="label">Temperature:</span><span class="value temp">{{ dev.temp }}</span></div>
                 <div class="row"><span class="label">Power:</span><span class="value power">{{ dev.power }}</span></div>
                 <div class="btn-container">
+                    {% if dev.connected %}
                     <button class="btn btn-rear" onclick="startStream('{{ dev.ip }}', 'Rear')">Rear Cam</button>
                     <button class="btn btn-front" onclick="startStream('{{ dev.ip }}', 'Front')">Front Cam</button>
+                    {% else %}
+                    <button class="btn" disabled>Waiting...</button>
+                    {% endif %}
                 </div>
             </div>
             {% endfor %}
@@ -124,13 +165,12 @@ def index():
 @app.route("/stream/start/<device_ip>/<cam_type>", methods=["POST"])
 def start_stream(device_ip, cam_type):
     title = f"{cam_type} Cam - {device_ip}"
-    
     if cam_type == "Rear":
         cam_id = "0"
         orientation = "90"
     else:
         cam_id = "1"
-        orientation = "270"  # Flips the front camera 180 degrees relative to rear to fix inversion
+        orientation = "270"
         
     subprocess.run(["adb", "connect", f"{device_ip}:5555"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
